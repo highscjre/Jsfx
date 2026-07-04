@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JSFX — 20 процедурных эффектов</title>
+  <style>
+    :root { color-scheme: dark; --panel: rgba(12,16,26,.82); --line: rgba(255,255,255,.14); }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #05070d; color: #eef3ff; font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; overflow: hidden; }
+    canvas { display: block; width: 100vw; height: 100vh; image-rendering: auto; }
+    .panel { position: fixed; left: 16px; top: 16px; width: min(390px, calc(100vw - 32px)); padding: 16px; border: 1px solid var(--line); border-radius: 18px; background: var(--panel); backdrop-filter: blur(18px); box-shadow: 0 18px 60px rgba(0,0,0,.35); }
+    h1 { margin: 0 0 10px; font-size: 18px; letter-spacing: .02em; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    label { display: grid; gap: 5px; color: #b8c4dc; font-size: 12px; }
+    select, input, button { width: 100%; border: 1px solid var(--line); border-radius: 10px; background: rgba(255,255,255,.08); color: #fff; padding: 9px 10px; font: inherit; }
+    option { background: #111827; }
+    input[type="range"] { padding: 0; accent-color: #78e4ff; }
+    .wide { grid-column: 1 / -1; }
+    .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+    button { cursor: pointer; background: linear-gradient(135deg, rgba(120,228,255,.24), rgba(255,125,232,.18)); }
+    .hint { margin: 10px 0 0; color: #91a0bb; font-size: 12px; }
+    .badge { position: fixed; right: 16px; bottom: 14px; color: rgba(238,243,255,.7); text-shadow: 0 2px 16px #000; }
+  </style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+  <section class="panel" aria-label="Настройки генератора эффектов">
+    <h1>JSFX: 20 процедурных эффектов</h1>
+    <div class="grid">
+      <label class="wide">Эффект
+        <select id="effect"></select>
+      </label>
+      <label>Сид
+        <input id="seed" value="aurora-42" autocomplete="off" />
+      </label>
+      <label>Итерации: <span id="iterLabel">180</span>
+        <input id="iterations" type="range" min="20" max="900" value="180" />
+      </label>
+      <label class="wide">Палитра
+        <select id="palette"></select>
+      </label>
+    </div>
+    <div class="buttons">
+      <button id="randomSeed">Случайный сид</button>
+      <button id="savePng">Сохранить PNG</button>
+    </div>
+    <p class="hint">Все эффекты детерминированы: одинаковые сид, палитра и итерации дают одинаковую картинку.</p>
+  </section>
+  <div class="badge" id="badge"></div>
+
+<script>
+(() => {
+  'use strict';
+
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const ui = {
+    effect: document.getElementById('effect'), seed: document.getElementById('seed'),
+    iterations: document.getElementById('iterations'), iterLabel: document.getElementById('iterLabel'),
+    palette: document.getElementById('palette'), badge: document.getElementById('badge')
+  };
+
+  const palettes = {
+    Neon: ['#07111f', '#00f5ff', '#ff2bd6', '#fff45c', '#7cff6b'],
+    Sunset: ['#160f29', '#ff4365', '#ff9f1c', '#ffd166', '#06d6a0'],
+    Ocean: ['#031926', '#05668d', '#00a896', '#02c39a', '#f0f3bd'],
+    Forest: ['#081c15', '#1b4332', '#2d6a4f', '#95d5b2', '#d8f3dc'],
+    Mono: ['#050505', '#303030', '#777777', '#c9c9c9', '#ffffff'],
+    Candy: ['#241023', '#ff99c8', '#fcf6bd', '#d0f4de', '#a9def9'],
+    Fire: ['#080000', '#6a040f', '#d00000', '#ffba08', '#fff3b0'],
+    Ice: ['#061826', '#0b4f6c', '#01baef', '#a9f0ff', '#fbfbff']
+  };
+
+  function hashSeed(str) { let h = 2166136261; for (const ch of str) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+  function rng(seed) { let t = seed >>> 0; return () => { t += 0x6D2B79F5; let r = Math.imul(t ^ t >>> 15, 1 | t); r ^= r + Math.imul(r ^ r >>> 7, 61 | r); return ((r ^ r >>> 14) >>> 0) / 4294967296; }; }
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const TAU = Math.PI * 2;
+  function color(hex, a = 1) { const n = parseInt(hex.slice(1), 16); return `rgba(${n >> 16 & 255},${n >> 8 & 255},${n & 255},${a})`; }
+  function pick(pal, r, i = 0) { return pal[Math.floor(r() * (pal.length - 1)) + 1 + i % (pal.length - 1) % (pal.length - 1)] || pal[1]; }
+  function clear(pal) { ctx.fillStyle = pal[0]; ctx.fillRect(0, 0, canvas.width, canvas.height); }
+  function fade(pal, a = .08) { ctx.fillStyle = color(pal[0], a); ctx.fillRect(0, 0, canvas.width, canvas.height); }
+
+  const effects = [
+    ['Звёздный дождь', (r,p,n,w,h)=>{ clear(p); for(let i=0;i<n*10;i++){ const x=r()*w,y=r()*h,l=5+r()*45; ctx.strokeStyle=color(pick(p,r),.35+r()*.55); ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x-l*.35,y+l); ctx.stroke(); }}],
+    ['Спиральные галактики', (r,p,n,w,h)=>{ clear(p); ctx.translate(w/2,h/2); for(let i=0;i<n*18;i++){ const a=i*.08+r()*.4, rad=Math.sqrt(i)*7; ctx.fillStyle=color(pick(p,r,i),.55); ctx.beginPath(); ctx.arc(Math.cos(a)*rad,Math.sin(a)*rad,1+r()*2.4,0,TAU); ctx.fill(); }}],
+    ['Вороной-кристаллы', (r,p,n,w,h)=>{ const pts=Array.from({length:Math.max(8,n/7|0)},()=>[r()*w,r()*h,pick(p,r)]); for(let y=0;y<h;y+=5)for(let x=0;x<w;x+=5){ let best=1e9,c=p[1]; for(const q of pts){ const d=(x-q[0])**2+(y-q[1])**2; if(d<best){best=d;c=q[2];}} ctx.fillStyle=color(c,.85); ctx.fillRect(x,y,5,5);} }],
+    ['Плазменные волны', (r,p,n,w,h)=>{ const ox=r()*10,oy=r()*10; for(let y=0;y<h;y+=3)for(let x=0;x<w;x+=3){ const v=Math.sin(x*.018+ox)+Math.sin(y*.021+oy)+Math.sin((x+y)*.012+n*.01); ctx.fillStyle=p[Math.abs(Math.floor(v*2))%(p.length-1)+1]; ctx.fillRect(x,y,3,3);} }],
+    ['Фрактальное дерево', (r,p,n,w,h)=>{ clear(p); ctx.translate(w/2,h*.94); function b(len,a,d){ if(d<=0||len<2)return; ctx.strokeStyle=color(p[d%(p.length-1)+1],.75); ctx.lineWidth=Math.max(1,d*.55); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*len,-Math.sin(a)*len); ctx.stroke(); ctx.translate(Math.cos(a)*len,-Math.sin(a)*len); b(len*(.66+r()*.06),a+.35+r()*.28,d-1); b(len*(.62+r()*.08),a-.35-r()*.28,d-1); ctx.translate(-Math.cos(a)*len,Math.sin(a)*len);} b(h*.2,Math.PI/2,Math.min(13,5+n/70|0)); }],
+    ['Лабиринт клеток', (r,p,n,w,h)=>{ clear(p); const s=Math.max(8,38-n/30); ctx.lineWidth=2; for(let y=0;y<h;y+=s)for(let x=0;x<w;x+=s){ ctx.strokeStyle=color(pick(p,r),.8); ctx.beginPath(); if(r()<.5){ctx.moveTo(x,y);ctx.lineTo(x+s,y+s)}else{ctx.moveTo(x+s,y);ctx.lineTo(x,y+s)} ctx.stroke(); }}],
+    ['Поток частиц', (r,p,n,w,h)=>{ clear(p); for(let k=0;k<n;k++){ let x=r()*w,y=r()*h; ctx.strokeStyle=color(pick(p,r),.18); ctx.beginPath(); ctx.moveTo(x,y); for(let j=0;j<80;j++){ const a=Math.sin(x*.006)+Math.cos(y*.008)+r()*.2; x+=Math.cos(a*TAU)*4; y+=Math.sin(a*TAU)*4; ctx.lineTo(x,y);} ctx.stroke(); }}],
+    ['Концентрические кольца', (r,p,n,w,h)=>{ clear(p); ctx.translate(w/2,h/2); for(let i=n;i>0;i--){ ctx.strokeStyle=color(p[i%(p.length-1)+1],.45); ctx.lineWidth=1+r()*5; ctx.beginPath(); ctx.arc((r()-.5)*80,(r()-.5)*80,i*Math.min(w,h)/n/2,0,TAU); ctx.stroke(); }}],
+    ['Глитч-полосы', (r,p,n,w,h)=>{ clear(p); for(let i=0;i<n*3;i++){ ctx.fillStyle=color(pick(p,r),.25+r()*.55); ctx.fillRect(r()*w,r()*h,(20+r()*w*.5),(2+r()*24)); }}],
+    ['Нейронная сеть', (r,p,n,w,h)=>{ clear(p); const pts=Array.from({length:n},()=>[r()*w,r()*h]); for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++){ const d=Math.hypot(pts[i][0]-pts[j][0],pts[i][1]-pts[j][1]); if(d<90){ctx.strokeStyle=color(pick(p,r),1-d/90); ctx.beginPath(); ctx.moveTo(...pts[i]); ctx.lineTo(...pts[j]); ctx.stroke();}} pts.forEach(q=>{ctx.fillStyle=p[3];ctx.fillRect(q[0]-2,q[1]-2,4,4)}); }],
+    ['Акварельные пятна', (r,p,n,w,h)=>{ clear(p); ctx.globalCompositeOperation='lighter'; for(let i=0;i<n;i++){ const g=ctx.createRadialGradient(r()*w,r()*h,0,r()*w,r()*h,40+r()*140); g.addColorStop(0,color(pick(p,r),.18)); g.addColorStop(1,color(pick(p,r),0)); ctx.fillStyle=g; ctx.fillRect(0,0,w,h);} }],
+    ['Мандала', (r,p,n,w,h)=>{ clear(p); ctx.translate(w/2,h/2); const arms=5+(r()*9|0); for(let i=0;i<n;i++)for(let a=0;a<arms;a++){ ctx.rotate(TAU/arms); ctx.fillStyle=color(pick(p,r,i),.35); ctx.beginPath(); ctx.ellipse(Math.sin(i*.09)*w*.22,i*h/n*.38,3+r()*14,2+r()*8,i*.1,0,TAU); ctx.fill(); }}],
+    ['Топографические линии', (r,p,n,w,h)=>{ clear(p); for(let y=0;y<h;y+=10) { ctx.beginPath(); for(let x=0;x<w;x+=8){ const yy=y+Math.sin(x*.018+r()*2)*18+Math.sin((x+y)*.02)*8; x?ctx.lineTo(x,yy):ctx.moveTo(x,yy);} ctx.strokeStyle=color(p[y/10%(p.length-1)+1],.65); ctx.stroke(); }}],
+    ['Пиксельный город', (r,p,n,w,h)=>{ clear(p); for(let x=0;x<w;x+=12+r()*28){ const bw=10+r()*34,bh=30+r()*h*.7; ctx.fillStyle=color(pick(p,r),.85); ctx.fillRect(x,h-bh,bw,bh); for(let y=h-bh+8;y<h-8;y+=14) if(r()<.45){ctx.fillStyle=color(p[p.length-1],.9);ctx.fillRect(x+3,y,4,4);} }}],
+    ['Молнии', (r,p,n,w,h)=>{ clear(p); for(let k=0;k<n/8;k++){ let x=r()*w,y=0; ctx.strokeStyle=color(pick(p,r),.8); ctx.beginPath(); ctx.moveTo(x,y); while(y<h){ x+=(r()-.5)*60; y+=12+r()*28; ctx.lineTo(x,y);} ctx.stroke(); }}],
+    ['Орбитальные дуги', (r,p,n,w,h)=>{ clear(p); ctx.translate(w/2,h/2); for(let i=0;i<n;i++){ ctx.rotate(r()*TAU); ctx.strokeStyle=color(pick(p,r),.35); ctx.beginPath(); ctx.ellipse(0,0,30+r()*w*.45,20+r()*h*.28,r()*TAU,r()*TAU,r()*TAU); ctx.stroke(); }}],
+    ['Шумовая ткань', (r,p,n,w,h)=>{ clear(p); for(let i=0;i<n*20;i++){ ctx.strokeStyle=color(pick(p,r),.08); ctx.beginPath(); const y=r()*h; ctx.moveTo(0,y); ctx.bezierCurveTo(w*.3,r()*h,w*.7,r()*h,w,r()*h); ctx.stroke(); }}],
+    ['Боке', (r,p,n,w,h)=>{ clear(p); for(let i=0;i<n*2;i++){ ctx.fillStyle=color(pick(p,r),.06+r()*.18); ctx.beginPath(); ctx.arc(r()*w,r()*h,8+r()*70,0,TAU); ctx.fill(); }}],
+    ['Изометрические блоки', (r,p,n,w,h)=>{ clear(p); const s=28; for(let i=0;i<n*2;i++){ const x=(r()*w)|0,y=(r()*h)|0,z=12+r()*80; ctx.fillStyle=color(pick(p,r),.8); ctx.beginPath(); ctx.moveTo(x,y-z);ctx.lineTo(x+s,y-z+s/2);ctx.lineTo(x,y-z+s);ctx.lineTo(x-s,y-z+s/2);ctx.closePath();ctx.fill(); ctx.fillStyle=color(pick(p,r),.45); ctx.fillRect(x-s,y-z+s/2,s,z); ctx.fillRect(x,y-z+s/2,s,z); }}],
+    ['Солнечные лучи', (r,p,n,w,h)=>{ clear(p); ctx.translate(w/2,h/2); for(let i=0;i<n*3;i++){ ctx.rotate(TAU/(n*3)); ctx.fillStyle=color(pick(p,r),.12+r()*.18); ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(w, -5-r()*30); ctx.lineTo(w, 5+r()*30); ctx.fill(); } ctx.fillStyle=color(p[p.length-1],.9); ctx.beginPath(); ctx.arc(0,0,Math.min(w,h)*.08,0,TAU); ctx.fill(); }]
+  ];
+
+  Object.keys(palettes).forEach(k => ui.palette.add(new Option(k, k)));
+  effects.forEach((e, i) => ui.effect.add(new Option(`${String(i + 1).padStart(2, '0')} · ${e[0]}`, i)));
+
+  function render() {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    canvas.width = innerWidth * dpr; canvas.height = innerHeight * dpr; ctx.setTransform(dpr,0,0,dpr,0,0);
+    const w = innerWidth, h = innerHeight, pal = palettes[ui.palette.value], n = +ui.iterations.value;
+    ctx.save(); ctx.lineCap = ctx.lineJoin = 'round'; ctx.lineWidth = 1; ctx.globalCompositeOperation = 'source-over';
+    effects[+ui.effect.value][1](rng(hashSeed(`${ui.seed.value}|${ui.palette.value}|${ui.effect.value}`)), pal, n, w, h);
+    ctx.restore(); ui.iterLabel.textContent = n; ui.badge.textContent = effects[+ui.effect.value][0];
+  }
+
+  document.querySelectorAll('input,select').forEach(el => el.addEventListener('input', render));
+  document.getElementById('randomSeed').addEventListener('click', () => { ui.seed.value = Math.random().toString(36).slice(2, 10); render(); });
+  document.getElementById('savePng').addEventListener('click', () => { const a = document.createElement('a'); a.download = `jsfx-${ui.effect.value}-${ui.seed.value}.png`; a.href = canvas.toDataURL('image/png'); a.click(); });
+  addEventListener('resize', render);
+  render();
+})();
+</script>
+</body>
+</html>
